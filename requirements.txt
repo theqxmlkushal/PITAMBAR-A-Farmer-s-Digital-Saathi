@@ -1,0 +1,15 @@
+groq
+fastapi
+uvicorn
+python-dotenv
+langgraph
+langchain-core
+qdrant-client
+sentence-transformers
+httpx
+ddgs
+feedparser
+openai-whisper
+gTTS
+python-multipart
+pydantic
