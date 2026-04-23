@@ -1,0 +1,620 @@
+Here are all 13 phases in plain text.
+
+---
+
+## Phase 0 — Master context (paste this into EVERY new Claude session first)
+
+```
+You are helping me build PITAMBAR — a production-grade agricultural advisory multi-agent system for Indian farmers. Here is the full project specification.
+
+PROJECT NAME: PITAMBAR
+LANGUAGE: Python 3.11+
+
+FINAL FILE STRUCTURE:
+PITAMBAR/
+├── app/
+│   ├── main.py                     (FastAPI entry, CORS, startup)
+│   ├── routes/query_route.py       (POST /query, POST /query/voice)
+│   └── controllers/query_controller.py  (calls orchestrator, handles multimodal)
+├── core/
+│   ├── orchestrator.py             (LangGraph StateGraph — the main pipeline)
+│   ├── router.py                   (intent classification using LLM)
+│   ├── state.py                    (TypedDict shared state schema)
+│   └── synthesizer.py              (final response combiner)
+├── agents/
+│   ├── base_agent.py               (shared run logic, calls groq_client)
+│   ├── market_agent.py
+│   ├── policy_agent.py
+│   ├── tech_agent.py
+│   └── crop_agent.py
+├── tools/
+│   ├── rag/
+│   │   ├── vector_store.py         (Qdrant in-memory client + indexing)
+│   │   └── retriever.py            (semantic search over documents)
+│   ├── apis/
+│   │   ├── weather_api.py          (Open-Meteo, free, no key)
+│   │   ├── market_api.py           (DuckDuckGo fallback for mandi prices)
+│   │   └── govt_scheme_api.py      (DuckDuckGo for scheme lookup)
+│   └── scraping/
+│       └── rss_parser.py           (feedparser for agri news RSS feeds)
+├── llm/
+│   ├── groq_client.py              (async Groq SDK wrapper)
+│   └── prompts/
+│       ├── router_prompt.txt
+│       ├── market_prompt.txt
+│       ├── policy_prompt.txt
+│       ├── tech_prompt.txt
+│       ├── crop_prompt.txt
+│       └── synthesis_prompt.txt
+├── memory/
+│   ├── session_memory.py           (in-memory per-session conversation history)
+│   └── user_profile.py             (farmer profile: location, crops, language)
+├── multimodal/
+│   ├── speech_to_text.py           (openai-whisper, runs locally free)
+│   └── text_to_speech.py           (gTTS, free)
+├── config/
+│   └── settings.py                 (all env vars and constants)
+├── data/documents/                 (PDFs/text files for RAG)
+├── tests/
+└── requirements.txt
+
+FREE TECH STACK (no paid APIs):
+- LLM: Groq API (free tier) — model: llama-3.3-70b-versatile
+- Embeddings: sentence-transformers all-MiniLM-L6-v2 (runs locally, free)
+- Vector DB: qdrant-client in-memory mode (no Docker needed for dev)
+- Market data: duckduckgo-search (no key)
+- Govt schemes: duckduckgo-search (no key)
+- Weather: Open-Meteo HTTP API (no key)
+- RSS: feedparser (no key)
+- STT: openai-whisper (local, free)
+- TTS: gTTS (free)
+- Graph: LangGraph (open source)
+- Server: FastAPI + Uvicorn
+
+INTENT TYPES: "market" | "policy" | "tech" | "crop" | "multi"
+
+AGENT RETURN FORMAT: {"agent": str, "result": str, "sources": list[str], "confidence": float}
+
+STATE FORMAT (from core/state.py):
+{
+  "query": str,
+  "session_id": str,
+  "user_profile": dict,
+  "intent": str,
+  "entities": list[str],
+  "agents_needed": list[str],
+  "agent_results": dict,
+  "rag_context": str,
+  "conversation_history": list[dict],
+  "final_response": str,
+  "audio_output": bytes | None,
+  "error": str | None
+}
+
+RULES:
+- All agent files are async
+- No hardcoded strings outside prompts/ folder
+- Every file has a if __name__ == "__main__" test block
+- Never add a library not in this spec without asking me first
+- Keep each file under 120 lines where possible
+```
+
+---
+
+## Phase 1 — Scaffold + requirements.txt + config/settings.py
+
+```
+Using the master context, create the following now:
+
+1. requirements.txt with exactly these packages:
+groq, fastapi, uvicorn, python-dotenv, langgraph, langchain-core,
+qdrant-client, sentence-transformers, httpx, duckduckgo-search,
+feedparser, openai-whisper, gTTS, python-multipart, pydantic
+
+2. .env file with placeholders:
+GROQ_API_KEY=your_groq_key_here
+SESSION_TTL_SECONDS=1800
+QDRANT_COLLECTION=pitambar_docs
+WHISPER_MODEL=base
+
+3. config/settings.py that:
+- Loads all env vars using python-dotenv
+- Defines a Settings dataclass or Pydantic BaseSettings with every var above
+- Exports a single `settings` instance at module level
+- Has a LOG_LEVEL constant defaulting to "INFO"
+
+4. Empty __init__.py files for: app/, app/routes/, app/controllers/, core/,
+agents/, tools/, tools/rag/, tools/apis/, tools/scraping/, llm/, llm/prompts/,
+memory/, multimodal/, config/, tests/
+
+Show every file path and full content.
+```
+
+**Your checklist:**
+- Create all folders: `mkdir -p PITAMBAR/app/routes PITAMBAR/app/controllers PITAMBAR/core PITAMBAR/agents PITAMBAR/tools/rag PITAMBAR/tools/apis PITAMBAR/tools/scraping PITAMBAR/llm/prompts PITAMBAR/memory PITAMBAR/multimodal PITAMBAR/config PITAMBAR/data/documents PITAMBAR/tests`
+- Go to console.groq.com — sign up free and paste your API key into .env
+- Run `pip install -r requirements.txt` with no errors (sentence-transformers takes a few minutes)
+- Run `python config/settings.py` — it should print the settings object without errors
+
+---
+
+## Phase 2 — LLM layer — groq_client.py + all 6 prompt files
+
+```
+Build the llm/ layer.
+
+llm/groq_client.py:
+- Import AsyncGroq from groq, load GROQ_API_KEY from settings
+- async def call_llm(system_prompt: str, user_message: str, model: str = "llama-3.3-70b-versatile", temperature: float = 0.3) -> str
+- Returns assistant message content as plain string
+- On error: log the exception and raise RuntimeError with a clear message
+- __main__ test: call with "say hello in one sentence"
+
+llm/prompts/ — create all 6 .txt files:
+
+router_prompt.txt: Instructs LLM to classify farm queries. Must return ONLY raw JSON (no markdown, no backticks, no extra text). JSON: {"intent":"market"|"policy"|"tech"|"crop"|"multi","entities":["keywords"],"agents_needed":["agent names if multi, else single"]}
+
+market_prompt.txt: You are a mandi market expert for Indian agriculture. Answer only price, demand, and ROI questions. Be specific with numbers when available. Under 150 words. Cite source URLs if provided.
+
+policy_prompt.txt: You are an Indian government agricultural scheme expert. Cover PM-KISAN, PMFBY, soil health cards, state subsidies. Under 150 words. If eligibility applies, always mention it.
+
+tech_prompt.txt: You are an agricultural machinery and technology advisor. Cover tractors, drip irrigation, sprayers, IoT sensors. Practical cost-benefit advice. Under 150 words.
+
+crop_prompt.txt: You are an agronomy expert for Indian farmers. Cover sowing seasons, disease diagnosis, fertilizer schedules, intercropping. Always include weather context if provided. Under 150 words.
+
+synthesis_prompt.txt: You are combining outputs from multiple agricultural expert agents into one clear, friendly, conversational response for an Indian farmer. Remove redundancy. Structure clearly if multiple topics. Under 300 words. Keep a warm, helpful tone.
+```
+
+**Your checklist:**
+- Run `python llm/groq_client.py` — must print a valid LLM response. If auth error, re-check .env key
+- Open each .txt prompt file and read it — the router prompt must say "return ONLY raw JSON" explicitly
+- Do NOT proceed if groq_client.py fails — everything depends on this
+
+---
+
+## Phase 3 — API tools — weather, market prices, govt schemes
+
+```
+Build tools/apis/ — all three API tool files.
+
+tools/apis/weather_api.py:
+- async def get_forecast(location: str) -> dict
+- Step 1: GET https://geocoding-api.open-meteo.com/v1/search?name={location}&count=1 to get lat/lon
+- Step 2: GET https://api.open-meteo.com/v1/forecast with lat/lon, daily params: temperature_2m_max, temperature_2m_min, precipitation_sum, windspeed_10m_max, forecast days=5
+- Use httpx.AsyncClient with timeout=10
+- Return: {"location": str, "days": [{"date":str,"max_temp":float,"min_temp":float,"rain_mm":float,"wind_kmh":float}], "error": None or str}
+- On any error return the dict with error field filled, never raise
+
+tools/apis/market_api.py:
+- async def get_mandi_prices(crop: str, location: str = "") -> dict
+- Uses duckduckgo_search DDGS().text() in asyncio.to_thread
+- Query: f"{crop} mandi price today {location} India"
+- Returns: {"crop": str, "results": [{"title":str,"url":str,"snippet":str}], "error": None or str}
+- Max 5 results, empty list on error
+
+tools/apis/govt_scheme_api.py:
+- async def search_schemes(query: str) -> dict
+- Same DuckDuckGo pattern
+- Query: f"{query} government scheme India farmer subsidy"
+- Returns: {"results": [{"title":str,"url":str,"snippet":str}], "error": None or str}
+
+Add __main__ test blocks in all three files.
+```
+
+**Your checklist:**
+- Run `python tools/apis/weather_api.py` — should print 5-day forecast for a test city (try "Pune")
+- Run `python tools/apis/market_api.py` — should print search snippets for "tomato mandi price"
+- If DuckDuckGo returns rate limit error, wait 15 seconds and retry — this is normal
+- All three files must return their error dict gracefully — never crash the process
+
+---
+
+## Phase 4 — Scraping tool — RSS parser
+
+```
+Build tools/scraping/rss_parser.py.
+
+Requirements:
+- Use feedparser library (sync, wrap in asyncio.to_thread)
+- RSS_FEEDS list at top of file with these free agri RSS feeds:
+  "https://www.downtoearth.org.in/rss/agriculture"
+  "https://krishijagran.com/feed/"
+- async def fetch_agri_news(keyword: str = "", max_items: int = 8) -> list[dict]
+- Fetches all feeds concurrently using asyncio.gather on to_thread wrappers
+- Filters entries by keyword in title or summary (case-insensitive), if keyword is empty returns all
+- Returns list of dicts: {"title": str, "summary": str, "url": str, "published": str}
+- Deduplicates by URL
+- Returns empty list on any error, never crashes
+
+__main__ test: fetch_agri_news("wheat") and print titles
+```
+
+**Your checklist:**
+- Run `python tools/scraping/rss_parser.py` — if feeds are down, it should print empty list, not crash
+- If both feeds return empty, that is fine for now — the tool is optional context enrichment
+
+---
+
+## Phase 5 — RAG tools — vector_store.py + retriever.py
+
+```
+Build the RAG layer tools/rag/.
+
+tools/rag/vector_store.py:
+- Use qdrant_client (QdrantClient in-memory: QdrantClient(":memory:"))
+- Use sentence_transformers SentenceTransformer("all-MiniLM-L6-v2") for embeddings
+- Collection name from settings.QDRANT_COLLECTION
+- Vector size: 384 (all-MiniLM-L6-v2 output)
+- Functions:
+  - init_collection() — creates collection if not exists, idempotent
+  - async def index_documents(docs: list[dict]) -> int
+    - Each doc: {"id": str, "text": str, "metadata": dict}
+    - Encode texts with sentence transformer (use model.encode in to_thread)
+    - Upsert to Qdrant, return count indexed
+  - async def search(query: str, top_k: int = 3) -> list[dict]
+    - Encode query, search Qdrant, return list of {"text":str,"score":float,"metadata":dict}
+
+tools/rag/retriever.py:
+- async def retrieve_context(query: str, top_k: int = 3) -> str
+- Calls vector_store.search()
+- Formats results into a single string: "Relevant context:\n1. {text}\n2. {text}..."
+- Returns empty string if no results
+
+Also: async def load_documents_from_folder(folder_path: str) -> int
+  - Reads all .txt and .pdf files from data/documents/
+  - For PDFs use PyPDF2 if available, else skip
+  - Calls index_documents with the loaded texts
+  - Returns total docs indexed
+
+__main__ test: index 3 sample strings, search for "wheat disease", print results
+```
+
+**Your checklist:**
+- Run `python tools/rag/vector_store.py` — first run downloads the embedding model (~80MB), wait for it
+- Search results must return with score values — if you get empty results, the collection was empty, not broken
+- Drop a .txt file into data/documents/ and run retriever.py — verify it indexes and returns relevant chunks
+
+---
+
+## Phase 6 — core/state.py — shared pipeline state
+
+```
+Build core/state.py.
+
+Requirements:
+- Define PitambarState as a TypedDict with these exact fields:
+  query: str
+  session_id: str
+  user_profile: dict
+  intent: str                   # "market"|"policy"|"tech"|"crop"|"multi"|""
+  entities: list[str]
+  agents_needed: list[str]
+  agent_results: dict           # {"agent_name": {"result":str,"sources":list,"confidence":float}}
+  rag_context: str
+  conversation_history: list[dict]
+  final_response: str
+  audio_output: bytes | None
+  error: str | None
+
+- Also define DEFAULT_STATE: PitambarState with empty/None defaults for all fields
+- Annotated imports from typing and typing_extensions as needed for TypedDict
+- No logic in this file — only the schema
+```
+
+**Your checklist:**
+- Run `python core/state.py` — no errors, prints DEFAULT_STATE
+- Count the fields — should be exactly 12 keys. Missing fields break LangGraph nodes silently
+
+---
+
+## Phase 7 — Agents — base_agent.py + all four agents
+
+```
+Build agents/base_agent.py and all four agent files.
+
+agents/base_agent.py:
+- async def run_agent(agent_name: str, system_prompt_file: str, query: str, entities: list[str], extra_context: str = "") -> dict
+- Loads prompt from llm/prompts/{system_prompt_file}
+- Builds user_message: "Query: {query}\nEntities: {entities}\nContext:\n{extra_context}"
+- Calls llm.groq_client.call_llm(system_prompt, user_message)
+- Returns {"agent": agent_name, "result": str, "sources": [], "confidence": 0.9}
+- On error: returns {"agent": agent_name, "result": "I could not process this query.", "sources": [], "confidence": 0.0}
+
+agents/crop_agent.py:
+- async def run(state: PitambarState) -> dict
+- Calls weather_api.get_forecast for any location in entities (first one found)
+- Calls market_api.get_mandi_prices for crop entities
+- Calls retriever.retrieve_context(state["query"])
+- Builds extra_context from weather + rag_context
+- Calls base_agent.run_agent("crop", "crop_prompt.txt", ...)
+- Returns agent result dict
+
+agents/market_agent.py:
+- Calls market_api.get_mandi_prices
+- Builds context from snippets
+- Calls base_agent.run_agent("market", "market_prompt.txt", ...)
+
+agents/policy_agent.py:
+- Calls govt_scheme_api.search_schemes
+- Calls retriever.retrieve_context
+- Calls base_agent.run_agent("policy", "policy_prompt.txt", ...)
+
+agents/tech_agent.py:
+- Calls market_api.get_mandi_prices (for equipment prices)
+- Calls retriever.retrieve_context
+- Calls base_agent.run_agent("tech", "tech_prompt.txt", ...)
+
+Add __main__ test in each agent file with a relevant sample query.
+```
+
+**Your checklist:**
+- Run each agent file individually — each must print a coherent agriculture answer
+- crop_agent should include weather data in its response when a location is in the query
+- Confidence should be 0.9 on success and 0.0 on error — verify this in printed output
+
+---
+
+## Phase 8 — core/router.py + core/synthesizer.py
+
+```
+Build core/router.py and core/synthesizer.py.
+
+core/router.py:
+- async def classify(state: PitambarState) -> PitambarState
+- Reads router_prompt.txt from llm/prompts/
+- Calls call_llm(router_prompt, state["query"])
+- Strips any markdown/backtick wrappers before json.loads
+- On JSON parse failure: fallback {"intent":"crop","entities":[],"agents_needed":["crop"]}
+- If intent == "multi" and agents_needed is empty: set agents_needed to all four agents
+- If intent is single: set agents_needed to [intent]
+- Returns updated state with intent, entities, agents_needed filled
+
+core/synthesizer.py:
+- async def synthesize(state: PitambarState) -> PitambarState
+- If only one agent result: set final_response = that result's "result" directly, skip LLM call
+- If multiple results: build combined string of all agent outputs labeled by agent name
+- Read synthesis_prompt.txt
+- Call call_llm(synthesis_prompt, combined_string)
+- Set state["final_response"] to LLM output
+- Return updated state
+
+__main__ tests:
+- router.py: test these 5 queries and print classified intent for each:
+  "onion mandi price in Nashik today"
+  "PM-KISAN eligibility"
+  "my wheat has rust disease and I want drip irrigation subsidy"
+  "best tractor for 5 acres"
+  "kharif crop advice for Vidarbha"
+- synthesizer.py: test with mock agent_results dict with 2 fake agent entries
+```
+
+**Your checklist:**
+- Run router.py — the third query above must return intent: "multi" with at least 2 agents_needed
+- Run synthesizer.py — output should be one coherent paragraph, not two answers pasted together
+- If LLM returns ```json wrapped output, tell Claude: "add a strip_json() helper that removes backticks before parsing"
+
+---
+
+## Phase 9 — Memory — session_memory.py + user_profile.py
+
+```
+Build memory/session_memory.py and memory/user_profile.py.
+
+memory/session_memory.py:
+- In-memory store: dict keyed by session_id
+- SessionMemory dataclass: session_id, messages: list[dict], created_at, last_active
+- Each message: {"role": "user"|"assistant", "content": str, "timestamp": str}
+- Functions:
+  - get_or_create(session_id: str) -> SessionMemory
+  - add_message(session_id: str, role: str, content: str) -> None
+  - get_history(session_id: str, last_n: int = 6) -> list[dict]
+  - clear_session(session_id: str) -> None
+  - cleanup_expired() -> int  (removes sessions older than SESSION_TTL_SECONDS from settings)
+- No external DB — pure dict in memory
+
+memory/user_profile.py:
+- UserProfile dataclass: session_id, name, location, primary_crops: list[str], language: str = "en", land_acres: float = 0.0
+- In-memory store dict
+- Functions:
+  - get_profile(session_id: str) -> UserProfile  (creates default if not exists)
+  - update_profile(session_id: str, **kwargs) -> UserProfile
+  - extract_profile_hints(query: str, current_profile: UserProfile) -> UserProfile
+    (uses simple keyword matching — if query has "Pune" update location, if has "wheat" add to crops, etc.)
+
+__main__ tests for both files.
+```
+
+**Your checklist:**
+- Run session_memory.py — add 3 messages, retrieve last 2, verify correct slice
+- Run user_profile.py — run extract_profile_hints with "wheat crop in Pune" and verify location and crops update
+
+---
+
+## Phase 10 — core/orchestrator.py — LangGraph pipeline
+
+```
+Build core/orchestrator.py — the LangGraph StateGraph that wires everything together.
+
+Requirements:
+- Import StateGraph from langgraph.graph
+- Import PitambarState from core.state
+- Import router, synthesizer, all four agents, session_memory, user_profile, retriever
+
+Node functions (each takes state: PitambarState, returns PitambarState):
+
+1. enrich_state_node: loads session history into state["conversation_history"], loads user profile into state["user_profile"], calls user_profile.extract_profile_hints to update profile from current query
+
+2. rag_node: calls retriever.retrieve_context(state["query"]), sets state["rag_context"]
+
+3. router_node: calls await router.classify(state), returns updated state
+
+4. route_decision function (NOT a node — a conditional edge function):
+   - reads state["agents_needed"]
+   - returns "single_agent" if len == 1, "parallel_agents" if len > 1
+
+5. single_agent_node: looks up agents_needed[0] in AGENT_MAP dict, awaits that agent's run(state), writes result to state["agent_results"]
+
+6. parallel_agents_node: uses asyncio.gather to run all needed agents concurrently, writes all results to state["agent_results"]
+
+7. synthesizer_node: calls await synthesizer.synthesize(state)
+
+8. save_memory_node: calls session_memory.add_message for user query and assistant final_response
+
+Graph wiring:
+START -> enrich_state_node -> rag_node -> router_node
+router_node -> conditional edge using route_decision -> single_agent_node OR parallel_agents_node
+single_agent_node -> synthesizer_node
+parallel_agents_node -> synthesizer_node
+synthesizer_node -> save_memory_node -> END
+
+Compile with graph.compile() and export as `pipeline`
+
+Public function:
+async def process(query: str, session_id: str = "default") -> dict
+- Builds initial state from DEFAULT_STATE with query and session_id filled
+- Calls await pipeline.ainvoke(initial_state)
+- Returns {"query", "intent", "final_response", "agents_used", "sources", "session_id"}
+
+__main__ test: process("What crop should I grow in Vidarbha in June and is there any government support?")
+```
+
+**Your checklist:**
+- Run `python core/orchestrator.py` — first time will be slow (model warmup), this is normal
+- agents_used must show ["crop","policy"] for the test query — confirms parallel routing works
+- final_response must be ONE coherent answer, not raw agent dumps
+- If you see a LangGraph import error, run: `pip install -U langgraph langchain-core`
+
+---
+
+## Phase 11 — Multimodal — speech_to_text.py + text_to_speech.py
+
+```
+Build multimodal/speech_to_text.py and multimodal/text_to_speech.py.
+
+multimodal/speech_to_text.py:
+- Use openai-whisper (import whisper, load model from settings.WHISPER_MODEL which defaults to "base")
+- Load model lazily (only on first call, cache in module-level variable)
+- async def transcribe(audio_bytes: bytes, language: str = "hi") -> dict
+  - Write bytes to a temp file (use tempfile.NamedTemporaryFile with .wav suffix)
+  - Run whisper model.transcribe() in asyncio.to_thread (it is sync and slow)
+  - Delete temp file after transcription
+  - Returns: {"text": str, "language": str, "confidence": float, "error": None or str}
+- On error: return dict with error field, empty text
+
+multimodal/text_to_speech.py:
+- Use gTTS (from gtts import gTTS)
+- async def synthesize_speech(text: str, language: str = "hi") -> bytes
+  - Map language codes: "hi" -> "hi", "en" -> "en", "mr" -> "mr"
+  - Run gTTS and save to BytesIO in asyncio.to_thread
+  - Returns raw MP3 bytes
+  - On error: return empty bytes, log error
+
+Note: Whisper "base" model downloads ~150MB on first use — this is expected.
+Add __main__ tests for both files.
+```
+
+**Your checklist:**
+- Run `python multimodal/text_to_speech.py` — should produce MP3 bytes output without crashing
+- Whisper model download on first run is normal — wait for it. After that it is cached locally
+- STT and TTS failures must NOT crash the FastAPI server — they are optional features
+
+---
+
+## Phase 12 — App layer — FastAPI routes, controller, main.py
+
+```
+Build the full app/ layer — all three files.
+
+app/controllers/query_controller.py:
+- async def handle_text_query(message: str, session_id: str) -> dict
+  - Calls orchestrator.process(message, session_id)
+  - Returns full response dict
+- async def handle_voice_query(audio_bytes: bytes, session_id: str, response_language: str = "hi") -> dict
+  - Calls speech_to_text.transcribe(audio_bytes, language=response_language)
+  - If transcription error: return {"error": "Could not transcribe audio"}
+  - Calls orchestrator.process(transcribed_text, session_id)
+  - Calls text_to_speech.synthesize_speech(result["final_response"], language=response_language)
+  - Returns response dict + {"audio_base64": base64.b64encode(audio_bytes).decode()}
+
+app/routes/query_route.py:
+- APIRouter with prefix="/query"
+- Pydantic models: TextQueryRequest(message: str, session_id: str = "default")
+- POST / — calls handle_text_query, returns JSONResponse
+- POST /voice — accepts UploadFile for audio + Form fields for session_id and language
+  - Reads audio bytes, calls handle_voice_query
+  - Returns JSONResponse with text + audio_base64
+
+app/main.py:
+- Create FastAPI app with title="PITAMBAR Agricultural Advisor"
+- Add CORSMiddleware allowing all origins
+- Include query_route router
+- GET /health returns {"status":"ok","service":"PITAMBAR","version":"1.0.0"}
+- @app.on_event("startup"): print startup message, call qdrant vector_store.init_collection(), call retriever.load_documents_from_folder("data/documents/")
+- Bottom: uvicorn.run on port 8000 with reload=True
+
+Give me the exact curl commands to test both the text and voice endpoints.
+```
+
+**Your checklist:**
+- Run `python app/main.py` — server must start on 8000 with no import errors
+- Visit http://localhost:8000/health — should return {"status":"ok"}
+- Visit http://localhost:8000/docs — all routes must appear in the Swagger UI
+- Run the curl text query Claude gave you — verify you get final_response in the JSON
+- Run a multi-intent query via curl — agents_used must contain 2+ agents
+
+---
+
+## Phase 13 — End-to-end verification
+
+Run all 6 acceptance tests via curl:
+
+```
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"message":"onion mandi price in Nashik today","session_id":"test1"}'
+
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"message":"my wheat crop has yellow rust","session_id":"test2"}'
+
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"message":"PM-KISAN yojana eligibility criteria","session_id":"test3"}'
+
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"message":"best mini tractor for 3 acre farm","session_id":"test4"}'
+
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"message":"drip irrigation cost and subsidy in Maharashtra","session_id":"test5"}'
+
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"message":"kharif crop advice for Vidarbha and any government schemes available","session_id":"test6"}'
+```
+
+**Acceptance criteria:**
+- Test 1: agents_used contains ["market"] only
+- Test 2: agents_used contains ["crop"], response mentions disease name
+- Test 3: agents_used contains ["policy"], response mentions eligibility
+- Test 4: agents_used contains ["tech"]
+- Test 5: agents_used contains at least ["market","policy"] or ["tech","policy"]
+- Test 6: agents_used contains ["crop","policy"] — multi-agent confirmed
+- All 6 return final_response as a single coherent paragraph
+
+---
+
+## Bug-fix template — use this whenever something breaks
+
+```
+I am building PITAMBAR (see master context). A bug occurred in [FILE PATH].
+
+Error / wrong behavior:
+[PASTE EXACT TRACEBACK OR WRONG OUTPUT HERE]
+
+Current file content:
+[PASTE FULL FILE CONTENT HERE]
+
+Fix only this file. Do not change any other files. Tell me the root cause in one sentence before showing the fix.
+```
